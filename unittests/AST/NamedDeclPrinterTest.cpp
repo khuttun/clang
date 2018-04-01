@@ -28,14 +28,19 @@ using namespace tooling;
 
 namespace {
 
+using PrintingPolicyModifier = void (*)(PrintingPolicy &policy);
+
 class PrintMatch : public MatchFinder::MatchCallback {
   SmallString<1024> Printed;
   unsigned NumFoundDecls;
   bool SuppressUnwrittenScope;
+  PrintingPolicyModifier PolicyModifier;
 
 public:
-  explicit PrintMatch(bool suppressUnwrittenScope)
-    : NumFoundDecls(0), SuppressUnwrittenScope(suppressUnwrittenScope) {}
+  explicit PrintMatch(bool suppressUnwrittenScope,
+                      PrintingPolicyModifier PolicyModifier)
+      : NumFoundDecls(0), SuppressUnwrittenScope(suppressUnwrittenScope),
+        PolicyModifier(PolicyModifier) {}
 
   void run(const MatchFinder::MatchResult &Result) override {
     const NamedDecl *ND = Result.Nodes.getNodeAs<NamedDecl>("id");
@@ -48,6 +53,8 @@ public:
     llvm::raw_svector_ostream Out(Printed);
     PrintingPolicy Policy = Result.Context->getPrintingPolicy();
     Policy.SuppressUnwrittenScope = SuppressUnwrittenScope;
+    if (PolicyModifier)
+      PolicyModifier(Policy);
     ND->printQualifiedName(Out, Policy);
   }
 
@@ -64,8 +71,9 @@ public:
 PrintedNamedDeclMatches(StringRef Code, const std::vector<std::string> &Args,
                         bool SuppressUnwrittenScope,
                         const DeclarationMatcher &NodeMatch,
-                        StringRef ExpectedPrinted, StringRef FileName) {
-  PrintMatch Printer(SuppressUnwrittenScope);
+                        StringRef ExpectedPrinted, StringRef FileName,
+                        PrintingPolicyModifier PolicyModifier) {
+  PrintMatch Printer(SuppressUnwrittenScope, PolicyModifier);
   MatchFinder Finder;
   Finder.addMatcher(NodeMatch, &Printer);
   std::unique_ptr<FrontendActionFactory> Factory =
@@ -94,26 +102,30 @@ PrintedNamedDeclMatches(StringRef Code, const std::vector<std::string> &Args,
 
 ::testing::AssertionResult
 PrintedNamedDeclCXX98Matches(StringRef Code, StringRef DeclName,
-                             StringRef ExpectedPrinted) {
+                             StringRef ExpectedPrinted,
+                             PrintingPolicyModifier PolicyModifier = nullptr) {
   std::vector<std::string> Args(1, "-std=c++98");
   return PrintedNamedDeclMatches(Code,
                                  Args,
                                  /*SuppressUnwrittenScope*/ false,
                                  namedDecl(hasName(DeclName)).bind("id"),
                                  ExpectedPrinted,
-                                 "input.cc");
+                                 "input.cc",
+                                 PolicyModifier);
 }
 
 ::testing::AssertionResult
-PrintedWrittenNamedDeclCXX11Matches(StringRef Code, StringRef DeclName,
-                                    StringRef ExpectedPrinted) {
+PrintedWrittenNamedDeclCXX11Matches(
+    StringRef Code, StringRef DeclName, StringRef ExpectedPrinted,
+    PrintingPolicyModifier PolicyModifier = nullptr) {
   std::vector<std::string> Args(1, "-std=c++11");
   return PrintedNamedDeclMatches(Code,
                                  Args,
                                  /*SuppressUnwrittenScope*/ true,
                                  namedDecl(hasName(DeclName)).bind("id"),
                                  ExpectedPrinted,
-                                 "input.cc");
+                                 "input.cc",
+                                 PolicyModifier);
 }
 
 } // unnamed namespace
@@ -179,4 +191,21 @@ TEST(NamedDeclPrinter, TestLinkageInNamespace) {
     "namespace X { extern \"C\" { int A; } }",
     "A",
     "X::A"));
+}
+
+TEST(NamedDeclPrinter, TestClassTemplateMemberFunction) {
+  ASSERT_TRUE(PrintedNamedDeclCXX98Matches(
+    "template <typename T> struct X { void A(); };"
+    "void Y() { X<int> x; x.A(); }",
+    "::X<int>::A",
+    "X<int>::A"));
+}
+
+TEST(NamedDeclPrinter, TestClassTemplateMemberFunction_SuppressTemplateArgs) {
+  ASSERT_TRUE(PrintedNamedDeclCXX98Matches(
+    "template <typename T> struct X { void A(); };"
+    "void Y() { X<int> x; x.A(); }",
+    "::X<int>::A",
+    "X::A",
+    [](PrintingPolicy &Policy){ Policy.SuppressTemplateArgs = true; }));
 }

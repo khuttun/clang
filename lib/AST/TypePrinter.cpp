@@ -1538,6 +1538,9 @@ static const TemplateArgument &getArgument(const TemplateArgumentLoc &A) {
 template<typename TA>
 static void printTo(raw_ostream &OS, ArrayRef<TA> Args,
                     const PrintingPolicy &Policy, bool SkipBrackets) {
+  if (Policy.SuppressTemplateArgs)
+    return;
+
   const char *Comma = Policy.MSVCFormatting ? "," : ", ";
   if (!SkipBrackets)
     OS << '<';
