@@ -5978,6 +5978,13 @@ AST_MATCHER(FunctionDecl, hasTrailingReturn) {
   return false;
 }
 
+AST_MATCHER_P(FunctionDecl, isInstantiatedFrom, internal::Matcher<FunctionDecl>,
+              InnerMatcher) {
+  FunctionDecl *InstantiatedFrom = Node.getInstantiatedFromMemberFunction();
+  return InnerMatcher.matches(InstantiatedFrom ? *InstantiatedFrom : Node,
+                              Finder, Builder);
+}
+
 } // namespace ast_matchers
 } // namespace clang
 
